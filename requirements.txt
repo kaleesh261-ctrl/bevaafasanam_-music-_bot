@@ -1,0 +1,4 @@
+pyTelegramBotAPI
+pytgcalls==2.1.0
+yt-dlp
+Pillow
