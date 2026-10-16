@@ -1,11 +1,9 @@
 import os
 
-BOT_TOKEN = os.getenv("8714921957:AAG5jGxb9ZkEIf8XepsMzSXMLR7e5Pnts4s", "")
-OWNER_ID = int(os.getenv("8811932075", 0))
-OWNER_NAME = "Bevafa Sanam Owner"
+API_ID = int(os.getenv("API_ID", "32633172"))
+API_HASH = os.getenv("API_HASH", "38393bbd7f1df5653950d6b301677904")
+STRING_SESSION = os.getenv("STRING_SESSION", "")
+OWNER_ID = int(os.getenv("OWNER_ID", "881193207"))
+OWNER_NAME = "devine"
 BOT_NAME = "Bevafa Sanam Music"
-BOT_USERNAME = "@bevafa_sanam_bot"
-DATABASE_NAME = "bevafa_sanam_music.db"
-MAX_QUEUE_SIZE = 100
 MAX_SONG_DURATION = 10800
-AUTO_DELETE_AFTER_PLAY = True
