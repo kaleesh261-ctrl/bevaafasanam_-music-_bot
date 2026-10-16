@@ -1,63 +1,24 @@
-import telebot
-from telebot import types
-import asyncio
 import os
-import sqlite3
-from datetime import datetime
+import asyncio
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message
 from pytgcalls import PyTgCalls
-from pytgcalls.types import AudioFile, AudioParameters
+from pytgcalls.types import AudioPiped
 import yt_dlp as ydl
-from config import BOT_TOKEN, OWNER_ID, OWNER_NAME, BOT_NAME, BOT_USERNAME, DATABASE_NAME, MAX_QUEUE_SIZE, MAX_SONG_DURATION, AUTO_DELETE_AFTER_PLAY
+from config import API_ID, API_HASH, STRING_SESSION, OWNER_NAME, BOT_NAME, MAX_SONG_DURATION
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-pytgcalls = PyTgCalls(bot)
+print(f"🎵 Starting {BOT_NAME} on Render...")
 
+app = Client(
+    "bevafasanam_music",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=STRING_SESSION
+)
+
+call_py = PyTgCalls(app)
 queue = {}
-current_song = {}
 is_playing = {}
-
-def get_db():
-    conn = sqlite3.connect(DATABASE_NAME, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    db = get_db()
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS groups (
-        chat_id INTEGER PRIMARY KEY,
-        title TEXT,
-        added_by INTEGER,
-        added_at TEXT,
-        bot_active INTEGER DEFAULT 1,
-        dj_mode INTEGER DEFAULT 0
-    );
-    """)
-    db.commit()
-    db.close()
-
-init_db()
-
-def get_group(chat_id):
-    db = get_db()
-    g = db.execute("SELECT * FROM groups WHERE chat_id=?", (chat_id,)).fetchone()
-    if not g:
-        db.execute("INSERT INTO groups (chat_id, added_at) VALUES (?,?)", 
-                   (chat_id, datetime.now().strftime("%Y-%m-%d %H:%M")))
-        db.commit()
-        g = db.execute("SELECT * FROM groups WHERE chat_id=?", (chat_id,)).fetchone()
-    db.close()
-    return dict(g) if g else None
-
-def can_play(chat_id, user_id):
-    g = get_group(chat_id)
-    if g and g['dj_mode'] == 0:
-        return True
-    try:
-        member = bot.get_chat_member(chat_id, user_id)
-        return member.status in ['administrator', 'creator']
-    except:
-        return False
 
 def download_audio(query):
     ydl_opts = {
@@ -77,38 +38,32 @@ def download_audio(query):
         if result and 'entries' in result:
             video = result['entries'][0]
             filename = f"downloads/{video['id']}.mp3"
-            return filename, video['title'], video['duration']
+            return filename, video['title'], video.get('duration', 180)
     return None, None, None
 
-@bot.message_handler(commands=['start'])
-def cmd_start(message):
-    user = message.from_user
-    if message.chat.type == 'private':
-        text = f"""💔 <b>{BOT_NAME}</b> 🎶\n\nWelcome {user.first_name}!\nType /play <song> to play music in voice chat!"""
-        bot.send_message(message.chat.id, text)
-    else:
-        bot.send_message(message.chat.id, f"💔 <b>{BOT_NAME}</b> is ready! Type /play <song>")
+@app.on_message(filters.command("start"))
+async def start_cmd(client, message: Message):
+    text = f"💔 <b>{BOT_NAME}</b> 🎶\n\nMain Render par 24/7 chalne wala Music Bot hoon! Group me VC on karke /play [song name] likhein."
+    await message.reply_text(text)
 
-@bot.message_handler(commands=['play'])
-def cmd_play(message):
+@app.on_message(filters.command("play"))
+async def play_cmd(client, message: Message):
     chat_id = message.chat.id
-    if len(message.text.split()) < 2:
-        return bot.reply_to(message, "⚠️ Use: /play <song_name>")
+    if len(message.command) < 2:
+        return await message.reply_text("⚠️ Use: <code>/play [song_name]</code>")
     
-    query = message.text.split(" ", 1)[1]
-    search_msg = bot.reply_to(message, f"🔍 Searching... 🎵 {query}")
+    query = " ".join(message.command[1:])
+    search_msg = await message.reply_text(f"🔍 Searching for <b>{query}</b>...")
     
     try:
-        filename, title, duration = download_audio(query)
+        filename, title, duration = await asyncio.to_thread(download_audio, query)
         if not filename:
-            return bot.edit_message_text("❌ Gaana nahi mila!", chat_id, search_msg.message_id)
+            return await search_msg.edit_text("❌ Gaana nahi mila!")
         
-        # --- DURATION CHECK (Yahan update kiya hai) ---
         if duration and duration > MAX_SONG_DURATION:
             if os.path.exists(filename):
                 os.remove(filename)
-            max_mins = MAX_SONG_DURATION // 60
-            return bot.edit_message_text(f"❌ Ye gaana bahut lamba hai! Max limit {max_mins} minutes ki hai.", chat_id, search_msg.message_id)
+            return await search_msg.edit_text("❌ Ye gaana bahut lamba hai!")
         
         if chat_id not in queue:
             queue[chat_id] = []
@@ -117,17 +72,17 @@ def cmd_play(message):
             'file': filename,
             'title': title,
             'duration': duration,
-            'requested_by': message.from_user.first_name
+            'user': message.from_user.first_name
         })
         
         if chat_id not in is_playing or not is_playing[chat_id]:
-            asyncio.run(play_next(chat_id))
-        
-        bot.edit_message_text(f"✅ <b>Added:</b> {title}", chat_id, search_msg.message_id)
+            asyncio.create_task(play_next(client, chat_id))
+            
+        await search_msg.edit_text(f"✅ Added to queue: <b>{title}</b>")
     except Exception as e:
-        bot.edit_message_text(f"❌ Error: {str(e)}", chat_id, search_msg.message_id)
+        await search_msg.edit_text(f"❌ Error: {str(e)}")
 
-async def play_next(chat_id):
+async def play_next(client, chat_id):
     global is_playing
     if chat_id not in queue or not queue[chat_id]:
         is_playing[chat_id] = False
@@ -137,23 +92,35 @@ async def play_next(chat_id):
     song = queue[chat_id].pop(0)
     
     try:
-        await pytgcalls.start(chat_id)
-        await pytgcalls.play(AudioFile(song['file'], AudioParameters(bitrate=192000, sample_rate=48000)))
-        bot.send_message(chat_id, f"🎶 <b>Now Playing:</b> {song['title']}")
-        
+        await call_py.play(chat_id, AudioPiped(song['file']))
+        await client.send_message(
+            chat_id,
+            f"🎶 <b>Now Playing:</b> <code>{song['title']}</code>\n👤 Requested by: {song['user']}"
+        )
         await asyncio.sleep(song['duration'] + 2)
-        await play_next(chat_id)
+        await play_next(client, chat_id)
     except Exception as e:
         print(f"Play error: {e}")
         is_playing[chat_id] = False
 
-@bot.message_handler(commands=['stop'])
-def cmd_stop(message):
+@app.on_message(filters.command("stop"))
+async def stop_cmd(client, message: Message):
     chat_id = message.chat.id
-    asyncio.run(pytgcalls.stop())
+    try:
+        await call_py.leave_call(chat_id)
+    except:
+        pass
     is_playing[chat_id] = False
     queue[chat_id] = []
-    bot.reply_to(message, "🛑 Stopped.")
+    await message.reply_text("🛑 Music stopped.")
 
-print(f"🎵 {BOT_NAME} is running...")
-bot.infinity_polling()
+async def main():
+    await app.start()
+    await call_py.start()
+    print(f"🎵 {BOT_NAME} is fully online on Render!")
+    await idle()
+    await call_py.stop()
+    await app.stop()
+
+if __name__ == "__main__":
+    app.loop.run_until_complete(main())
